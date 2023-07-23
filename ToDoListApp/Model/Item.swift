@@ -2,11 +2,15 @@
 //  Item.swift
 //  ToDoListApp
 //
-//  Created by UdayKiran Naik on 05/07/23.
+//  Created by UdayKiran Naik on 09/07/23.
 //
 
 import Foundation
-class Item: Encodable, Decodable{
-    var title: String = ""
-    var done: Bool = false
+import RealmSwift
+
+class Item: Object{
+    @objc dynamic var name: String = ""
+    @objc dynamic var done: Bool = false
+    @objc dynamic var date: Date?
+    var parentCategory = LinkingObjects(fromType: Category.self, property: "items")
 }

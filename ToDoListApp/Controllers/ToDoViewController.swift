@@ -6,39 +6,51 @@
 //
 
 import UIKit
-import CoreData
+import RealmSwift
 
-class ToDoViewController: UITableViewController {
-
-    var itemArray = [Item]()
-    var selectedCategory: CategoryList? {
+class ToDoViewController: SwipeTableViewController {
+    
+    var todoItems:Results<Item>?
+    let realm = try! Realm()
+    
+    var selectedCategory: Category? {
         didSet{
             loadItems()
         }
     }
- //  let dataFilePath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("Items.plist")
-        
-    let context = (UIApplication.shared.delegate as! AppDelegate).persistentContainer.viewContext
     override func viewDidLoad() {
         super.viewDidLoad()
- //       print(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask))
-//        print(dataFilePath!)
+        tableView.rowHeight = 65.0
         loadItems()
     }
     
+    override func viewWillAppear(_ animated: Bool) {
+        if let colorHex = selectedCategory?.color {
+            guard let navBar = navigationController?.navigationBar else {fatalError("Navigation controller does not exist.")}
+            navBar.backgroundColor = UIColor(hexString: colorHex)
+            title = selectedCategory!.name
+            let textAttributes = [NSAttributedString.Key.foregroundColor:            UIColor(contrastingBlackOrWhiteColorOn: UIColor(hexString: colorHex)!, isFlat: true)]
+            navBar.titleTextAttributes = textAttributes
+        }
+    }
+    
     //MARK: - TableView DataSource methods
-
+    
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return itemArray.count
+        return todoItems?.count ?? 1
     }
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        //let cell = UITableViewCell(style: .default, reuseIdentifier: "TodoCell")
-        let cell = tableView.dequeueReusableCell(withIdentifier: "TodoCell", for: indexPath)
-        cell.textLabel?.text = itemArray[indexPath.row].title
-        if (itemArray[indexPath.row].done == true){
-            cell.accessoryType = .checkmark
+        let cell = super.tableView(tableView, cellForRowAt: indexPath)
+        if let item = todoItems?[indexPath.row]{
+            cell.textLabel?.text = item.name
+            if let color = UIColor(hexString: selectedCategory!.color)?.darken(byPercentage: CGFloat(indexPath.row)/CGFloat(todoItems!.count))
+            {
+                cell.backgroundColor = color
+                cell.textLabel?.textColor = UIColor(contrastingBlackOrWhiteColorOn: color, isFlat: true)
+            }
+            cell.accessoryType = item.done ? .checkmark : .none
         } else {
-            cell.accessoryType = .none
+            cell.textLabel?.text = "No items added."
         }
         return cell
     }
@@ -46,30 +58,41 @@ class ToDoViewController: UITableViewController {
     //MARK: - TableView Delegate methods
     
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        
- //       context.delete(itemArray[indexPath.row]) //method for deleting data in core data.
- //       itemArray.remove(at: indexPath.row)
-        
-        itemArray[indexPath.row].done = !itemArray[indexPath.row].done
-            saveData()
-            tableView.deselectRow(at: indexPath, animated: true)
+        if let item = todoItems?[indexPath.row]{
+            do{
+                try realm.write{
+                    item.done = !item.done
+                }
+            } catch{
+                print("Error in updating the status done: \(error)")
+            }
+        }
+        tableView.reloadData()
+        tableView.deselectRow(at: indexPath, animated: true)
     }
     
     //MARK: - AddButtonPressed Methods
-    
+    //
     @IBAction func addButtonPressed(_ sender: UIBarButtonItem) {
         var textField = UITextField()
         let alert = UIAlertController(title: "Add Todo Item", message: "", preferredStyle: .alert)
         let action = UIAlertAction(title: "Add Item", style: .default) { action in
             if let text = textField.text{
-                let newItem = Item(context: self.context)
-                newItem.title = text
-                newItem.done = false
-                newItem.parentCategory = self.selectedCategory
-                self.itemArray.append(newItem)
-                self.saveData()
+                if self.selectedCategory != nil{
+                    do{
+                        try self.realm.write{
+                            let newItem = Item()
+                            newItem.name = text
+                            newItem.date = Date()
+                            self.selectedCategory?.items.append(newItem)
+                        }
+                    } catch {
+                        print("Error in adding item: \(error)")
+                    }
+                }
+                self.tableView.reloadData()
             }
-         }
+        }
         alert.addTextField { alertTextField in
             alertTextField.placeholder = "Create new Item"
             textField = alertTextField
@@ -77,69 +100,50 @@ class ToDoViewController: UITableViewController {
         alert.addAction(action)
         present(alert, animated: true, completion: nil)
     }
-  
-    //MARK: - Saving and Reloading data into CoreData
-
-    func saveData(){
-        do {
-             try context.save()
-        } catch {
-            print("Error in context saving: \(error)")
-        }
-        
+    
+    //MARK: - Saving and Reloading data into Relam Database
+    
+    func loadItems(){
+        todoItems = selectedCategory?.items.sorted(byKeyPath: "name", ascending: true)
         DispatchQueue.main.async {
             self.tableView.reloadData()
         }
     }
-
-    func loadItems(with request: NSFetchRequest<Item> = Item.fetchRequest(), withPredicate predicate: NSPredicate? = nil){
-      //      let request: NSFetchRequest<Item> = Item.fetchRequest()
-        let categoryPredicate = NSPredicate(format: "parentCategory.name MATCHES %@", selectedCategory!.name!)
-        if let additionalPredicate = predicate{
-            let compoundPredicate = NSCompoundPredicate(andPredicateWithSubpredicates: [additionalPredicate, categoryPredicate])
-            request.predicate = compoundPredicate
-        } else{
-            request.predicate = categoryPredicate
-        }
-          do{
-              itemArray = try context.fetch(request)
+    
+    //MARK: - Update Delete in SwipeViewCellDelegate method
+    
+    override func update(indexPath: IndexPath) {
+        if let itemForDeletion = self.todoItems?[indexPath.row] {
+            do{
+                try self.realm.write{
+                    self.realm.delete(itemForDeletion)
+                }
             } catch{
-                print("Error loading items: \(error)")
+                print("Error in deleting todoItems: \(error)")
             }
-            
         }
-
-
+    }
 }
 
 //MARK: - SearchBar Methods
 
 extension ToDoViewController: UISearchBarDelegate{
     func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
-        let request: NSFetchRequest<Item> = Item.fetchRequest()
-        if let searchBarText = searchBar.text {
-            let predicate = NSPredicate(format: "title CONTAINS[cd] %@", searchBarText)
-            request.predicate = predicate
-        }
-        let sortDescriptor = NSSortDescriptor(key: "title", ascending: true)
-        request.sortDescriptors = [sortDescriptor]
-        loadItems(with: request, withPredicate: request.predicate)
+        todoItems = todoItems?.filter("name CONTAINS[cd] %@", searchBar.text!).sorted(byKeyPath: "date",ascending: true)
         tableView.reloadData()
     }
     
     func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
         if searchBar.text?.count == 0 {
-           loadItems()
-           tableView.reloadData()
+            loadItems()
+            tableView.reloadData()
             DispatchQueue.main.async {
                 searchBar.resignFirstResponder()
             }
-       }
+        }
     }
     
 }
-
-
 
 //MARK: - For saving data in plist.
 
